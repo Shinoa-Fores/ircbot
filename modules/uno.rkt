@@ -398,8 +398,15 @@
      (if (not (equal? colour "wild"))
       colour
       (cond
-       ((null? (cdr args)) colour)
-       (else (get-real-colour (cadr args)))
+       ((null? (cdr args)) (uno-err msg "Please enter a valid new colour."))
+       (else
+        (let ((ncl (get-real-colour (cadr args))))
+         (if ncl
+          ncl
+          (uno-err msg "Please enter a valid new colour.")
+         )
+        )
+       )
       )
      )
     )
@@ -467,7 +474,7 @@
   ((regexp-match? #px"^y" colour) "yellow")
   ((regexp-match? #px"^b" colour) "blue")
   ((regexp-match? #px"^w" colour) "wild")
-  (else "wild")
+  (else #f)
  )
 )
 
@@ -527,7 +534,12 @@
 )
 
 (define (calc-player-score player channel)
- (query-maybe-value *db* "SELECT sum(value) FROM uno_whole_deck WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE channel = $1 AND uno_whole_deck.id = uno_hands.id )" channel)
+ (let ((score (query-maybe-value *db* "SELECT sum(value) FROM uno_whole_deck WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE channel = $1 AND uno_whole_deck.id = uno_hands.id )" channel)))
+  (if (sql-null? score)
+   0
+   score
+  )
+ )
 )
 
 (define (log-game msg channel winner)
