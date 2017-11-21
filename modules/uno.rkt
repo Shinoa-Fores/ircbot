@@ -204,7 +204,7 @@
 (define (reverse-order msg channel player first-card?)
  (let ((plist (hash-ref! players channel '())))
   (begin
-   (if first-card?
+   (if (or first-card? (= (length plist) 2))
     (hash-set! players channel (reverse plist))
     (hash-set! players channel (append (list (car plist)) (reverse (cdr plist))))
    )
@@ -527,21 +527,15 @@
 )
 
 (define (calc-player-score player channel)
- (query-maybe-value *db* "SELECT sum(value) FROM uno_whole_deck WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE player = $1 AND channel = $2 AND uno_whole_deck.id = uno_hands.id )" player channel)
+ (query-maybe-value *db* "SELECT sum(value) FROM uno_whole_deck WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE channel = $1 AND uno_whole_deck.id = uno_hands.id )" channel)
 )
 
 (define (log-game msg channel winner)
- (let ((fmt (list)))
+ (let ((score (calc-player-score winner channel)))
   (begin
-   (reply msg (string-append "You won, " winner "!"))
-   (for ((player (in-list (hash-ref! players channel '()))))
-    (let* ((tscore (calc-player-score player channel))
-           (score (if (sql-null? tscore) 0 tscore)))
-     (query-exec *db* "UPDATE uno_scoreboard SET score = score + $1, games = games + 1 WHERE player = $2 AND channel = $3" score player channel)
-     (set! fmt (append fmt (list (string-append player " has " (~a score) " points"))))
-    )
-   )
-   (reply msg (string-append (string-join fmt ", ") "."))
+   (reply msg (string-append winner " won with " (~a score) " points!"))
+   (query-exec *db* "UPDATE uno_scoreboard SET score = score + $1 WHERE player = $2 AND channel = $3" score winner channel)
+   (query-exec *db* "UPDATE uno_scoreboard SET games = games + 1 WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE uno_hands.player = uno_scoreboard.player )")
   )
  )
 )
@@ -570,7 +564,7 @@
 
 (define (show-scores msg channel)
  (let
-  ((scores (query-rows *db* "SELECT player, games, score FROM uno_scoreboard WHERE channel = $1 AND score >= 0 ORDER BY score LIMIT 10" channel))
+  ((scores (query-rows *db* "SELECT player, games, score FROM uno_scoreboard WHERE channel = $1 AND score >= 0 ORDER BY score DESC LIMIT 10" channel))
    (text "Top players: "))
   (begin
    (for ((score (in-list scores)))
@@ -657,7 +651,6 @@
   )
  )
 )
-
 
 ;;;; EXECUTION
 
