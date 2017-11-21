@@ -606,6 +606,10 @@
  )
 )
 
+(define (show-cards nick)
+ (notify nick "tl;dr: args are [colour number] for number cards, [colour r/s/d2] for reverse, skip and draw-two, [w/wd4 newcolour] for wild and wild draw-four. Newcolour is the colour they'll act as.")
+)
+
 ; main command parser
 (define (uno)
  (let* ((msg (thread-receive))
@@ -621,6 +625,9 @@
 
    ((equal? command "hand")
     (show-hand msg channel nick))
+
+   ((equal? command "cards")
+    (show-cards nick))
 
    ((equal? command "help")
     (show-help nick))
