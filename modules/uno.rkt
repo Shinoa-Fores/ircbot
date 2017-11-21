@@ -535,7 +535,10 @@
   (begin
    (reply msg (string-append winner " won with " (~a score) " points!"))
    (query-exec *db* "UPDATE uno_scoreboard SET score = score + $1 WHERE player = $2 AND channel = $3" score winner channel)
-   (query-exec *db* "UPDATE uno_scoreboard SET games = games + 1 WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE uno_hands.player = uno_scoreboard.player )")
+
+   (for ((player (in-list (hash-ref! players channel '()))))
+    (query-exec *db* "UPDATE uno_scoreboard SET games = games + 1 WHERE channel = $1 AND player = $2" channel player)
+   )
   )
  )
 )
