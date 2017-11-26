@@ -39,5 +39,5 @@
 )
 
 (define (get-nick msg)
- (cadr (regexp-match #px"(\\S+)!\\w+@" (irc-message-prefix msg)))
+ (cadr (regexp-match #px"(\\S+)!\\S+@" (irc-message-prefix msg)))
 )

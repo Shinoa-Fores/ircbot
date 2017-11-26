@@ -114,7 +114,7 @@
      )
     )
    )
-   text 
+   (string-trim text)
   )
  )
 )
@@ -137,12 +137,8 @@
  )
 )
 
-(define (print-cardcount channel)
- (let ((text (get-cardcount channel)))
-  (for ((player (in-list (hash-ref! players channel '()))))
-   (notify player text)
-  )
- )
+(define (print-cardcount msg channel)
+ (reply msg (get-cardcount channel))
 )
 
 (define (print-info channel)
@@ -159,7 +155,7 @@
 
 (define (begin-turn msg channel)
  (begin
-  (print-cardcount channel)
+  (print-cardcount msg channel)
   (print-current-turn msg channel)
   (print-info channel)
  )
@@ -303,7 +299,7 @@
  (let* ((msg (thread-receive))
         (channel (car (irc-message-parameters msg)))
         (status (hash-ref! channel-status channel 0))
-        (command (car (string-split (cadr (irc-message-parameters msg)))))
+        (text (cadr (irc-message-parameters msg)))
         (args (cdr (string-split (cadr (irc-message-parameters msg)))))
         (nick (get-nick msg)))
   (cond
@@ -319,14 +315,16 @@
    ((not (equal? (car (hash-ref! players channel '())) nick))
     (reply msg (string-append "It's not your turn yet, " nick "!")))
 
-   ((and (regexp-match? #px"^%d" command)
+   ((and (regexp-match? #px"^%d\\w*\r$" text)
          (= (hash-ref! card-drawn? channel 0) 0))
     (draw-cards 1 msg channel nick #t))
 
-   ((regexp-match? #px"^%pa" command)
+   ((or (regexp-match? #px"^%s\\w*\r$" text)
+        (regexp-match? #px"^%pa\\w*\r$" text))
     (pass-turn msg channel))
 
-   ((and (regexp-match? #px"^%p" command)
+   ((and (regexp-match? #px"^%p" text)
+         (not (regexp-match? #px"^%pa" text))
          (not (null? args)))
     (play-card msg channel nick args))
   )
@@ -350,8 +348,8 @@
 ; Just setup initial variables.
 (define (init-game msg channel)
  (begin
-  (hash-set! channel-status channel 1)
   (reply msg "Starting a game of uno. Type %uno join to join, any player who joined can type %uno begin to begin the game.")
+  (hash-set! channel-status channel 1)
   (add-player msg channel)
  )
 )
@@ -381,7 +379,9 @@
           (equal? (car args) "wd4")
          )
          "wild"
-         (get-real-colour (car args))
+         (let ((col (get-real-colour (car args))))
+          (if col col (uno-err msg "That colour doesn't exist in uno."))
+         )
      )
     )
     (type
@@ -434,7 +434,7 @@
 
    ((and (not (= (hash-ref! card-drawn? channel 0) 0))
          (not (= (hash-ref! card-drawn? channel 0) card-id)))
-    (uno-err msg "You can only play the card you've just drawn, or use %pass to pass your turn."))
+    (uno-err msg "You can only play the card you've just drawn, or use %skip to skip your turn."))
 
    ((not (or (equal? colour top-colour) (equal? type top-type)
              (equal? colour "wild") (equal? top-colour "wild")))
@@ -504,6 +504,8 @@
   (cond
    ((= status 0)
     (reply msg "There's no game to leave!"))
+   ((null? (cdr (hash-ref! players channel '())))
+    (stop-game msg channel player))
    (else
     (begin
      (query-exec *db* "DELETE FROM uno_hands WHERE player = $1" player)
@@ -562,7 +564,7 @@
    ((= status 0)
     (reply msg "There's no game! What are you trying to stop?"))
 
-   ((not (in-players? channel nick))
+   ((or (not (in-players? channel nick)))
     (reply msg "You can't stop a game that you're not a part of!"))
 
    (else
@@ -603,7 +605,7 @@
 (define (show-help player)
  (begin
   (notify player "To learn to play uno: https://service.mattel.com/instruction_sheets/42001pr.pdf")
-  (notify player "When the bot announces your turn, you can spend it by either drawing a card or playing a card. To have it notify you of your hand, type %uno hand. To draw a card, simply type %draw or %d. To play a card, type %play or %p. If you still have nothing after drawing, type %pass or %pa.")
+  (notify player "When the bot announces your turn, you can spend it by either drawing a card or playing a card. To have it notify you of your hand, type %uno hand. To draw a card, simply type %draw or %d. To play a card, type %play or %p. If you still have nothing after drawing, type %skip or %s.")
   (notify player "The %play command works as follows: %play colour type new-colour?. Colour is the colour of your card. The first letter is enough. For wild cards, type wild. The type is either the number of your card, d2 for a draw-two card, wd4 for a wild draw-four card, s for a skip card, or w for a regular wild card. If you played a wild card, you have to specify a new colour the same way you did your first colour for the deck's top card.")
  )
 )
@@ -681,5 +683,7 @@
 (hash-set! *cmds* "%play" draw-play)
 (hash-set! *cmds* "%d" draw-play)
 (hash-set! *cmds* "%draw" draw-play)
+(hash-set! *cmds* "%skip" draw-play)
+(hash-set! *cmds* "%s" draw-play)
 (hash-set! *cmds* "%pass" draw-play)
 (hash-set! *cmds* "%pa" draw-play)
