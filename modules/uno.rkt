@@ -9,11 +9,18 @@
 (require "../lib/structs.rkt")
 (require "../lib/colours.rkt")
 
+;;; house rules (hashes #channel . bool)
+(define freewd4? (make-hash))
+
 ; key is #channel, val is an int
 ; 0: not playing
 ; 1: setting up
 ; 2: playing
 (define channel-status (make-hash))
+
+(define play-allowed? (make-hash))
+(define challenge-threads (make-hash))
+(define top-prev-colour (make-hash))
 
 ; key in #channel, val is the ID of the card that was drawn, or 0 if no card was drawn.
 (define card-drawn? (make-hash))
@@ -48,6 +55,10 @@
  (query-exec *db* "INSERT INTO uno_decks ( channel, id ) ( SELECT $1, id FROM uno_whole_deck )" channel)
 )
 
+(define (rebuild-deck channel)
+ (query-exec *db* "INSERT INTO uno_decks ( channel, id ) ( SELECT $1, id FROM uno_whole_deck WHERE id NOT IN ( SELECT id FROM uno_hands WHERE channel = $1 ) AND id NOT IN ( SELECT id FROM uno_topcard WHERE channel = $1 ) )"  channel)
+)
+
 (define (uno-cl text colour)
  (string-append
   clbold
@@ -70,7 +81,7 @@
   (begin
    (for ((i (in-range amount)))
     (let*
-     ((card-id (query-value *db* "SELECT id FROM uno_decks WHERE channel = $1 LIMIT 1 OFFSET floor(random()*(SELECT count(*) FROM uno_decks))" channel))
+     ((card-id (query-value *db* "SELECT id FROM uno_decks WHERE channel = $1 LIMIT 1 OFFSET floor(random()*(SELECT count(*) FROM uno_decks WHERE channel = $1))" channel))
       (card-name (query-value *db* "SELECT name FROM uno_whole_deck WHERE id = $1 LIMIT 1" card-id)))
      (begin
 
@@ -79,8 +90,7 @@
 
       ; reinitialize the deck if it's empty
       (cond ((= (query-value *db* "SELECT count(*) FROM uno_decks WHERE channel = $1" channel) 0)
-             ;; Replace with a function that compares the whole deck with the players' hands and the topcard and builds a new deck using the missing cards (XOR)
-             (init-deck channel)) 
+             (rebuild-deck channel)) 
       )
 
       (let ((clname (uno-cl-fromname card-name)))
@@ -108,7 +118,7 @@
   (begin
    (for ((player (in-list players)))
     (let
-     ((ccount (query-value *db* "SELECT count(*) FROM uno_hands WHERE player = $1" player)))
+     ((ccount (query-value *db* "SELECT count(*) FROM uno_hands WHERE player = $1 AND channel = $2" player channel)))
      (set! text
       (string-append text " " player "[" (~a ccount) "]")
      )
@@ -119,10 +129,10 @@
  )
 )
 
-(define (get-hand channel player)
+(define (get-hand channel player prefix)
  (let* ((card-names
         (query-list *db* "SELECT name FROM uno_whole_deck WHERE EXISTS ( SELECT 1 FROM uno_hands WHERE channel = $1 AND player = $2 AND uno_hands.id = uno_whole_deck.id )" channel player))
-       (text (string-append "You have " (~a (length card-names)) " cards: ")))
+       (text (string-append prefix " " (~a (length card-names)) " cards: ")))
   (begin
    (for ((i (in-range (length card-names))))
     (let ((card (uno-cl-fromname (list-ref card-names i))))
@@ -148,7 +158,7 @@
   (begin
    (notify player "It's your turn!")
    (notify player (string-append "The current top card is a " (uno-cl-fromname top-name) " (" (uno-cl top-colour top-colour) ")."))
-   (notify player (get-hand channel player))
+   (notify player (get-hand channel player "You have"))
   )
  )
 )
@@ -161,23 +171,33 @@
  )
 )
 
+(define (is-winner? player channel)
+  (= (query-value *db* "SELECT count(*) FROM uno_hands WHERE channel = $1 AND player = $2" channel player) 0)
+)
+
 (define (end-turn msg channel)
- (begin
-  (hash-set! card-drawn? channel 0)
+ (let ((player (car (hash-ref! players channel '()))))
+  (begin
+   (hash-set! card-drawn? channel 0)
 
-  (let
-   ((plist (hash-ref! players channel '())))
-   (apply-specials msg channel
-    (if (not (null? (cdr plist)))
-     (cadr plist)
-     (car plist)
-    ) #f
+   (let
+    ((plist (hash-ref! players channel '())))
+    (apply-specials msg channel
+     (if (not (null? (cdr plist)))
+      (cadr plist)
+      (car plist)
+     ) #f
+    )
    )
+
+   (shift-players channel)
+
+   (if (is-winner? player channel)
+    (victor msg channel player)
+    (begin-turn msg channel)
+   )
+
   )
-
-  (shift-players channel)
-
-  (begin-turn msg channel)
  )
 )
 
@@ -189,11 +209,63 @@
  )
 )
 
-(define (wild-draw-four msg channel player first-card?)
+(define (wd4 msg channel player)
  (begin
   (shift-players channel)
   (draw-cards 4 msg channel player #f)
   (reply msg (string-append player " has drawn 4 cards, and their turn will be skipped."))
+ )
+)
+
+(define (wd4-legal? channel player)
+ (query-maybe-value *db* "SELECT true FROM uno_hands WHERE channel = $1 AND player = $2 AND EXISTS ( SELECT 1 FROM uno_whole_deck WHERE uno_hands.id = uno_whole_deck.id AND colour = $3 ) LIMIT 1" channel player (hash-ref! top-prev-colour channel "null"))
+)
+
+(define (wd4-challenge msg channel victim caller)
+ (if (wd4-legal? channel caller)
+  (begin
+   (notify victim (get-hand channel caller (string-append caller " has")))
+   (draw-cards 4 msg channel caller #f)
+   (reply msg (string-append "The challenge succeeded! " caller "'s hand was revealed to " victim " and they have drawn 4 cards!"))
+  )
+  (begin
+   (shift-players channel)
+   (draw-cards 6 msg channel victim #f)
+   (reply msg (string-append "The challenge failed! " victim " has drawn 6 cards, and their turn will be skipped."))
+  )
+ )
+)
+
+(define (wd4-challenge-setup msg channel victim caller)
+ (begin
+  (hash-set! play-allowed? channel #f)
+  (hash-set! challenge-threads channel (current-thread))
+  (reply msg (string-append victim ", would you like to challenge the wd4? %uno (yes/no)"))
+
+  (let ((challenge? (thread-receive)))
+   (if challenge?
+    (wd4-challenge msg channel victim caller)
+    (wd4 msg channel victim)
+   )
+  )
+
+  (hash-set! play-allowed? channel #t)
+ )
+)
+
+(define (wild-draw-four msg channel player first-card?)
+ (let ((caller (car (hash-ref! players channel '()))))
+  (begin
+   (cond
+    ((or
+      (hash-ref! freewd4? channel #f)
+      (is-winner? player channel)
+      first-card?)
+     (wd4 msg channel player))
+
+    (else (wd4-challenge-setup msg channel player caller))
+   )
+  )
  )
 )
 
@@ -260,6 +332,7 @@
    (query-exec *db* "DELETE FROM uno_decks WHERE channel = $1 AND id = $2" channel id)
    (reply msg (string-append "Top card is a " (uno-cl-fromname name) "."))
    (apply-specials msg channel (car (hash-ref! players channel '())) #f)
+   (hash-set! top-prev-colour channel colour)
   )
  )
 )
@@ -282,7 +355,7 @@
 
    ((and (= status 2)
          (in-players? channel player))
-    (notify player (get-hand channel player)))
+    (notify player (get-hand channel player "You have")))
   )
  )
 )
@@ -308,6 +381,9 @@
 
    ((= status 1)
     (reply msg "Relax, we're starting the game! Geeze!"))
+
+   ((not (hash-ref! play-allowed? channel #t))
+    (reply msg "You can't play right now!"))
 
    ((not (in-players? channel nick))
     (reply msg (string-append "You're not in the game, " nick ".")))
@@ -345,9 +421,31 @@
  (query-exec *db* "DELETE FROM uno_topcard WHERE channel = $1" channel)
 )
 
+(define (parse-game-args msg channel)
+ (let*
+  ((text (cadr (irc-message-parameters msg)))
+   (args (cdr (string-split text))))
+
+  (for ((arg (in-list args)))
+   (cond
+
+    ; Disable wd4 challenge
+    ((equal? arg "freewd4")
+     (begin
+      (reply msg "freewd4 was enabled. wd4 can now be played at any time and can't be challenged, just like a wild card.")
+      (hash-set! freewd4? channel #t)
+     )
+    )
+
+   )
+  )
+ )
+)
+
 ; Just setup initial variables.
 (define (init-game msg channel)
  (begin
+  (parse-game-args msg channel)
   (reply msg "Starting a game of uno. Type %uno join to join, any player who joined can type %uno begin to begin the game.")
   (hash-set! channel-status channel 1)
   (add-player msg channel)
@@ -449,18 +547,15 @@
      (string-append "Top card is now a " (uno-cl-fromname card-name)
       (if (equal? top-colour newcolour)
        "."
-       (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
+       (begin
+        (hash-set! top-prev-colour channel top-colour)
+        (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
+       )
       )
      )
     )
 
-    (let
-     ((cardsleft (query-value *db* "SELECT count(*) FROM uno_hands WHERE player = $1" player)))
-     (if (= cardsleft 0)
-      (victor msg channel player)
-      (end-turn msg channel)
-     )
-    )
+    (end-turn msg channel)
 
    )
   )
@@ -483,7 +578,7 @@
        (status (hash-ref! channel-status channel 0)))
   (cond
    ((= status 0)
-    (reply msg "No game is starting. Use %uno start to start a game."))
+    (reply msg "No game is starting. Use %uno start [homerules] to start a game."))
    ((= status 2)
     (reply msg "There's already a game going on. Wait until they're done or ask them to use %uno stop to stop it."))
    ((in-players? channel player)
@@ -508,6 +603,7 @@
     (stop-game msg channel player))
    (else
     (begin
+     (query-exec *db* "INSERT INTO uno_decks ( channel, id ) ( SELECT $1, id FROM uno_hands WHERE player = $2 )" channel player)
      (query-exec *db* "DELETE FROM uno_hands WHERE player = $1" player)
      (hash-set! players channel (remove player (hash-ref! players channel '())))
      (reply msg (string-append player " was removed from the game."))
@@ -604,7 +700,8 @@
 
 (define (show-help player)
  (begin
-  (notify player "To learn to play uno: https://service.mattel.com/instruction_sheets/42001pr.pdf")
+  (notify player "To learn to play uno: https://service.mattel.com/instruction_sheets/42001pr.pdf - The bot is 100% compliant to these rules, unless a home rule is set as a flag to %uno start.")
+  (notify player "%uno start will start setting up the game. You can join the game with %uno join during this time. %uno begin will beging the game, and then you can play. %uno start takes homerules arguments after the start, which can be seen in %uno homerules.")
   (notify player "When the bot announces your turn, you can spend it by either drawing a card or playing a card. To have it notify you of your hand, type %uno hand. To draw a card, simply type %draw or %d. To play a card, type %play or %p. If you still have nothing after drawing, type %skip or %s.")
   (notify player "The %play command works as follows: %play colour type new-colour?. Colour is the colour of your card. The first letter is enough. For wild cards, type wild. The type is either the number of your card, d2 for a draw-two card, wd4 for a wild draw-four card, s for a skip card, or w for a regular wild card. If you played a wild card, you have to specify a new colour the same way you did your first colour for the deck's top card.")
  )
@@ -622,6 +719,41 @@
 
 (define (show-cards nick)
  (notify nick "tl;dr: args are [colour number] for number cards, [colour r/s/d2] for reverse, skip and draw-two, [w/wd4 newcolour] for wild and wild draw-four. Newcolour is the colour they'll act as.")
+)
+
+(define (show-homerules msg)
+ (reply msg "Home rules can be specified in the %uno start command, after the start. The home rules are - freewd4: play wd4 anytime")
+)
+
+(define (to-challenge-thread msg channel nick challenge?)
+ (let*
+  ((cthd (hash-ref! challenge-threads channel #f))
+   (status (hash-ref! channel-status channel 0))
+   (plist (hash-ref! players channel '()))
+   (challenger
+    (if (null? (cdr plist))
+     (car plist)
+     (cadr plist)
+    )
+   )
+  )
+
+  (cond
+   ((= status 0)
+    (reply msg "There's no game going on!"))
+   ((= status 1)
+    (reply msg "What is there to challenge or let go? We're setting up!"))
+
+   ((or (not (thread? cthd)) (not (thread-running? cthd)))
+    (reply msg "There's nothing to currently challenge or let go!"))
+
+   ((not (equal? nick challenger))
+    (reply msg "You can't challenge this!"))
+
+   (else (thread-send cthd challenge?))
+  )
+
+ )
 )
 
 ; main command parser
@@ -643,6 +775,9 @@
    ((equal? command "cards")
     (show-cards nick))
 
+   ((equal? command "homerules")
+    (show-homerules msg))
+
    ((equal? command "help")
     (show-help nick))
 
@@ -660,6 +795,11 @@
 
    ((equal? command "join")
     (add-player msg channel))
+
+   ((equal? command "yes")
+    (to-challenge-thread msg channel nick #t))
+   ((equal? command "no")
+    (to-challenge-thread msg channel nick #f))
   )
  )
 )
