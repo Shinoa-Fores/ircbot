@@ -2,6 +2,7 @@
 
 (provide intensify)
 (require irc)
+(require "../lib/colours.rkt")
 (require "../lib/utils.rkt")
 (require "../lib/structs.rkt")
 
@@ -9,11 +10,12 @@
  (let ((msg (thread-receive)))
   (let ((text (string-trim (cadr (irc-message-parameters msg)))))
    (reply msg
-    (string-append "["
+    (string-append clbold "["
      (string-locale-upcase
       (string-trim (string-trim text "[" #:right? #f) "]" #:left? #f)
      )
-    " INTENSIFIES]")
+    " INTENSIFIES" clpref "]" clbold
+    )
    )
   )
  )
