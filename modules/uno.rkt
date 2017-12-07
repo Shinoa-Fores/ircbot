@@ -9,8 +9,16 @@
 (require "../lib/structs.rkt")
 (require "../lib/colours.rkt")
 
+;;;; TODO:
+;; modularize the house rules instead of defining them and their
+;;  description explicitly every time.
+
 ;;; house rules (hashes #channel . bool)
 (define freewd4? (make-hash))
+
+(define (reset-homerules channel)
+ (hash-set! freewd4? channel #f)
+)
 
 ; key is #channel, val is an int
 ; 0: not playing
@@ -222,16 +230,19 @@
 )
 
 (define (wd4-challenge msg channel victim caller)
- (if (wd4-legal? channel caller)
-  (begin
-   (notify victim (get-hand channel caller (string-append caller " has")))
-   (draw-cards 4 msg channel caller #f)
-   (reply msg (string-append "The challenge succeeded! " caller "'s hand was revealed to " victim " and they have drawn 4 cards!"))
-  )
-  (begin
-   (shift-players channel)
-   (draw-cards 6 msg channel victim #f)
-   (reply msg (string-append "The challenge failed! " victim " has drawn 6 cards, and their turn will be skipped."))
+ (begin
+  (notify victim (get-hand channel caller (string-append caller " has")))
+
+  (if (wd4-legal? channel caller)
+   (begin
+    (draw-cards 4 msg channel caller #f)
+    (reply msg (string-append "The challenge succeeded! " caller "'s hand was revealed to " victim " and they have drawn 4 cards!"))
+   )
+   (begin
+    (shift-players channel)
+    (draw-cards 6 msg channel victim #f)
+    (reply msg (string-append "The challenge failed! " victim " has seen " caller "'s hand and drawn 6 cards, and their turn will be skipped."))
+   )
   )
  )
 )
@@ -445,8 +456,10 @@
 ; Just setup initial variables.
 (define (init-game msg channel)
  (begin
+  (reset-homerules channel)
   (parse-game-args msg channel)
   (reply msg "Starting a game of uno. Type %uno join to join, any player who joined can type %uno begin to begin the game.")
+  (hash-set! card-drawn? channel 0)
   (hash-set! channel-status channel 1)
   (add-player msg channel)
  )
@@ -543,14 +556,12 @@
     (query-exec *db* "DELETE FROM uno_hands WHERE channel = $1 AND player = $2 AND id = $3" channel player card-id)
     (query-exec *db* "UPDATE uno_topcard SET name = $1, type = $2, colour = $3, special = $4, id = $5 WHERE channel = $6" card-name type newcolour special? card-id channel)
 
+    (hash-set! top-prev-colour channel top-colour)
     (reply msg
      (string-append "Top card is now a " (uno-cl-fromname card-name)
       (if (equal? top-colour newcolour)
        "."
-       (begin
-        (hash-set! top-prev-colour channel top-colour)
-        (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
-       )
+       (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
       )
      )
     )
@@ -665,6 +676,7 @@
 
    (else
     (begin
+     (reset-homerules channel)
      (hash-set! channel-status channel 0)
      (hash-remove! players channel)
      (cleanup-db channel)
@@ -712,6 +724,7 @@
   (cond
    ((= status 0) (reply msg "Please use %uno start first to setup the game."))
    ((= status 2) (reply msg "The game has already begun!"))
+   ((not (in-players? channel (get-nick msg))) (reply msg "Join the game first..."))
    (else (init-game2 msg channel))
   )
  )
