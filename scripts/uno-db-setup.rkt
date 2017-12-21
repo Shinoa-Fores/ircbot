@@ -3,7 +3,7 @@
 ;;;; Create the tables in the database and fill them.
 
 (require db)
-(require "../lib/db.rkt")
+(require "../conf/db.rkt")
 
 (define num-cards 0)
 

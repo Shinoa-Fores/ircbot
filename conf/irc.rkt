@@ -13,9 +13,9 @@
 
 (define *nick* "ircbot")
 (define *password* '())
-(define *realname* "IRC BOT")
+(define *realname* "ircbot")
 (define *server* "irc.snoonet.org")
-(define *channels* (list "#bottest"))
+(define *channels* (list "#bsdmasterrace"))
 (define-values (*irc* *irc-ready*)
  (irc-connect
   *server*

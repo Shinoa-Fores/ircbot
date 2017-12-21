@@ -1,18 +1,23 @@
 #lang racket
-(provide parse-msg on-invite)
+
+(provide on-privmsg on-invite)
 (require irc)
+(require "hooks.rkt")
 (require "threads.rkt")
 (require "structs.rkt")
 (require "utils.rkt")
 
-(define (on-invite msg)
- (join (irc-message-parameters msg))
+(define (on-invite)
+ (let ((msg (thread-receive)))
+  (join (irc-message-parameters msg))
+ )
 )
 
 ;; take a (struct irc-message) and parse it
-(define (parse-msg msg)
+(define (on-privmsg)
  (let*
-  ((params (irc-message-parameters msg))
+  ((msg (thread-receive))
+   (params (irc-message-parameters msg))
    (text (cadr (irc-message-parameters msg)))
    (val
     (cond
@@ -37,3 +42,6 @@
   )
  )
 )
+
+(mk-hook "INVITE" on-invite)
+(mk-hook "PRIVMSG" on-privmsg)

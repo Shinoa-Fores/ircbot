@@ -4,12 +4,16 @@
 
 (require irc)
 (require db)
-(require "../lib/db.rkt")
+
+(require "../conf/db.rkt")
+
+(require "../lib/userinfo.rkt")
 (require "../lib/utils.rkt")
 (require "../lib/structs.rkt")
 (require "../lib/colours.rkt")
 
 ;;;; TODO:
+;; make %uno yes/no call a procedure stored in a variable instead
 ;; modularize the house rules instead of defining them and their
 ;;  description explicitly every time.
 
@@ -671,7 +675,7 @@
    ((= status 0)
     (reply msg "There's no game! What are you trying to stop?"))
 
-   ((or (not (in-players? channel nick)))
+   ((and (not (in-players? channel nick)) (not (is-user-mod? nick channel)))
     (reply msg "You can't stop a game that you're not a part of!"))
 
    (else

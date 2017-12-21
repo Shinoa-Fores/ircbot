@@ -1,7 +1,7 @@
 #lang racket
 
 (require irc)
-(require "info.rkt")
+(require "../conf/irc.rkt")
 (provide join part reply notify get-nick)
 
 ;; join an arbitrary list of channels
@@ -30,8 +30,14 @@
 )
 
 ;; reply to what's assumed to be a privmsg according to its params
-(define (reply msg text)
- (irc-send-message *irc* (car (irc-message-parameters msg)) text)
+(define (reply msg text (mod-allowed? #f))
+ (let
+  ((dangerous? (string-prefix? text "!")))
+  (if (or (not dangerous?) (and mod-allowed? dangerous?))
+   (irc-send-message *irc* (car (irc-message-parameters msg)) text)
+   (irc-send-message *irc* (car (irc-message-parameters msg)) "no")
+  )
+ )
 )
 
 (define (notify target text)

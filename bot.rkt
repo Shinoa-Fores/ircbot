@@ -4,15 +4,17 @@
 (require irc)
 (require racket/async-channel)
 
+(require "conf/irc.rkt")
+
 (require "lib/core.rkt")
-(require "lib/info.rkt")
 (require "lib/structs.rkt")
 (require "lib/utils.rkt")
 (require "lib/threads.rkt")
+(require "lib/hooks.rkt")
 
 ;;; importing modules
 
-(require "modules/pingpong.rkt")
+(require "mods/pingpong.rkt")
 
 ;;; initial setup
 
@@ -37,15 +39,7 @@
   ((msg (async-channel-get *msgchan*))
    (irccmd (irc-message-command msg)))
   (begin
-
-   (cond
-    ((equal? irccmd "PRIVMSG")
-     (parse-msg msg))
-
-    ((equal? irccmd "INVITE")
-     (on-invite msg))
-   )
-
+   (run-hooks irccmd msg)
    (main)
   )
  )
