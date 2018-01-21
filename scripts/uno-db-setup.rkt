@@ -20,7 +20,10 @@
  "CREATE TABLE IF NOT EXISTS uno_topcard ( channel varchar(100), name varchar(20), type varchar(5), colour varchar(10), special boolean, id int, UNIQUE(channel) )"
 )
 (query-exec *db*
- "CREATE TABLE IF NOT EXISTS uno_scoreboard ( channel varchar(100), player varchar(50), score int, games int )"
+ "CREATE TABLE IF NOT EXISTS uno_stats ( channel varchar(100), player varchar(50), score int, wins int, games int )"
+)
+(query-exec *db*
+ "CREATE TABLE IF NOT EXISTS uno_channels ( channel varchar(100), allowed bool )"
 )
 
 (define (add-card amount name type colour special? value)

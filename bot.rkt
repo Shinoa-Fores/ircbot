@@ -14,23 +14,14 @@
 
 ;;; importing modules
 
-(require "mods/pingpong.rkt")
-
-;;; initial setup
-
-(sleep 10)
-
-(identify)
-
-(sleep 10)
-
-(join *channels*)
+(require "scripts.rkt")
+(require "mods/intensify.rkt")
 
 (define *msgchan*
  (irc-connection-incoming *irc*)
 )
 
-(thread thread-watcher)
+(void (thread thread-watcher))
 
 ;;; execution
 

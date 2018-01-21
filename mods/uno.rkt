@@ -63,6 +63,36 @@
  )
 )
 
+(define (channel-enabled? channel)
+ (query-maybe-value *db* "SELECT allowed FROM uno_channels WHERE channel = $1" channel)
+)
+
+(define (change-uno-status msg nick channel status)
+ (let
+  ((status (hash-ref! channel-status channel 0)))
+  (cond
+   ((= status 1)
+    (reply msg "You can't disable uno while a game is starting. As a mod, use %uno stop to stop the game."))
+
+   ((= status 2)
+    (reply msg "You can't disable uno while there's a game going on. As a mod, use %uno stop to stop the game."))
+
+   ((not (is-user-mod? nick channel))
+    (reply msg "You need to be a channel op or hop to enable or disable uno."))
+ 
+   (else
+    (begin
+     (if (query-maybe-value *db* "SELECT channel FROM uno_channels WHERE channel = $1" channel)
+      (query-exec *db* "UPDATE uno_channels SET allowed = $2 WHERE channel = $1" channel (if status #t #f))
+      (query-exec *db* "INSERT INTO uno_channels VALUES ( $1, $2 )" channel (if status #t #f))
+     )
+     (reply msg (string-append "uno is now " (if status "enabled" "disabled") " in " channel "."))
+    )
+   )
+  )
+ )
+)
+
 (define (init-deck channel)
  (query-exec *db* "INSERT INTO uno_decks ( channel, id ) ( SELECT $1, id FROM uno_whole_deck )" channel)
 )
@@ -391,6 +421,9 @@
         (args (cdr (string-split (cadr (irc-message-parameters msg)))))
         (nick (get-nick msg)))
   (cond
+   ((not (channel-enabled? channel))
+    (reply msg "This channel has uno disabled. Use %uno on to enable it."))
+
    ((= status 0)
     (reply msg "Nobody's playing uno..."))
 
@@ -628,11 +661,11 @@
  )
 )
 
-(define (init-scoreboard channel)
+(define (init-stats channel)
  (for ((player (in-list (hash-ref! players channel '()))))
   (cond
-   ((not (query-maybe-value *db* "SELECT games FROM uno_scoreboard WHERE channel = $1 AND player = $2" channel player))
-    (query-exec *db* "INSERT INTO uno_scoreboard (channel, player, score, games) VALUES ($1, $2, 0, 0)" channel player)
+   ((not (query-maybe-value *db* "SELECT games FROM uno_stats WHERE channel = $1 AND player = $2" channel player))
+    (query-exec *db* "INSERT INTO uno_stats (channel, player, score, wins, games) VALUES ($1, $2, 0, 0, 0)" channel player)
    )
   )
  )
@@ -640,7 +673,7 @@
 
 (define (victor msg channel winner)
  (begin
-  (init-scoreboard channel)
+  (init-stats channel)
   (log-game msg channel winner)
   (stop-game msg channel winner)
  )
@@ -659,10 +692,10 @@
  (let ((score (calc-player-score winner channel)))
   (begin
    (reply msg (string-append winner " won with " (~a score) " points!"))
-   (query-exec *db* "UPDATE uno_scoreboard SET score = score + $1 WHERE player = $2 AND channel = $3" score winner channel)
+   (query-exec *db* "UPDATE uno_stats SET score = score + $1, wins = wins + 1 WHERE player = $2 AND channel = $3" score winner channel)
 
    (for ((player (in-list (hash-ref! players channel '()))))
-    (query-exec *db* "UPDATE uno_scoreboard SET games = games + 1 WHERE channel = $1 AND player = $2" channel player)
+    (query-exec *db* "UPDATE uno_stats SET games = games + 1 WHERE channel = $1 AND player = $2" channel player)
    )
   )
  )
@@ -693,16 +726,19 @@
 
 (define (show-scores msg channel)
  (let
-  ((scores (query-rows *db* "SELECT player, games, score FROM uno_scoreboard WHERE channel = $1 AND score >= 0 ORDER BY score DESC LIMIT 10" channel))
+  ((stats (query-rows *db* "SELECT player, wins, games, score FROM uno_stats WHERE channel = $1 AND score >= 0 ORDER BY score DESC LIMIT 10" channel))
    (text "Top players: "))
   (begin
-   (for ((score (in-list scores)))
+   (for ((player-stats (in-list stats)))
     (set! text
      (string-append text
-      (vector-ref score 0)
-      "[" (~a (vector-ref score 1)) "]: "
-      (~a (vector-ref score 2)) " points"
-      (if (not (equal? score (last scores)))
+      (vector-ref player-stats 0)
+      "["
+      (~a (vector-ref player-stats 1))
+      "/"
+      (~a (vector-ref player-stats 2)) "]: "
+      (~a (vector-ref player-stats 3)) " points"
+      (if (not (equal? player-stats (last stats)))
              " - "
              "."
       )
@@ -710,6 +746,43 @@
     )
    )
    (reply msg text)
+  )
+ )
+)
+
+(define (show-stats msg nick channel)
+ (let*
+  ((args (string-split (cadr (irc-message-parameters msg))))
+   (target
+    (if
+     (null? (cddr args))
+     nick
+     (caddr args)
+    )
+   )
+   (resultv (query-maybe-row *db* "SELECT player, wins, games, score FROM uno_stats WHERE channel = $1 AND player = $2 ORDER BY score DESC LIMIT 10" channel target))
+  )
+
+  (cond
+   ((not resultv)
+   (reply msg
+    (string-append "No stats found for player " target " in " channel)))
+
+   (else
+    (let-values
+     (((name wins games score) (vector->values resultv)))
+     (reply msg
+      (string-append
+       "stats for " name ": "
+       (~a score) " points in "
+       (~a games) " games out of "
+       (~a wins) " wins with an average of "
+       (real->decimal-string (/ score games) 2) " points/game: "
+       (real->decimal-string (* (/ wins games) 100) 2) "% wins."
+      )
+     )
+    )
+   )
   )
  )
 )
@@ -729,6 +802,8 @@
    ((= status 0) (reply msg "Please use %uno start first to setup the game."))
    ((= status 2) (reply msg "The game has already begun!"))
    ((not (in-players? channel (get-nick msg))) (reply msg "Join the game first..."))
+   ((< (length (hash-ref! players channel '())) 2)
+    (reply msg "You can't start a game unless there are two or more players joined in."))
    (else (init-game2 msg channel))
   )
  )
@@ -783,8 +858,20 @@
                      (car args)
                      (kill-thread (current-thread)))))
   (cond
+   ((equal? command "on")
+    (change-uno-status msg nick channel #t))
+
+   ((equal? command "off")
+    (change-uno-status msg nick channel #f))
+
+   ((not (channel-enabled? channel))
+    (reply msg "This channel has uno disabled. Use %uno on to enable it."))
+
    ((equal? command "scoreboard")
     (show-scores msg channel))
+
+   ((equal? command "stats")
+    (show-stats msg nick channel))
 
    ((equal? command "hand")
     (show-hand msg channel nick))

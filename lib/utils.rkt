@@ -2,7 +2,7 @@
 
 (require irc)
 (require "../conf/irc.rkt")
-(provide join part reply notify get-nick)
+(provide join part reply irc-send notify get-nick ellipsize-string)
 
 ;; join an arbitrary list of channels
 (define (join chans)
@@ -34,8 +34,25 @@
  (let
   ((dangerous? (string-prefix? text "!")))
   (if (or (not dangerous?) (and mod-allowed? dangerous?))
-   (irc-send-message *irc* (car (irc-message-parameters msg)) text)
+   (irc-send-message *irc* (car (irc-message-parameters msg)) (string-trim text))
    (irc-send-message *irc* (car (irc-message-parameters msg)) "no")
+  )
+ )
+)
+
+(define (ellipsize-string string max)
+ (if (> (string-length string) max)
+  (string-append (substring string 0 max) "...")
+  string
+ )
+)
+
+(define (irc-send target text (mod-allowed? #f))
+ (let
+  ((dangerous? (string-prefix? text "!")))
+  (if (or (not dangerous?) (and mod-allowed? dangerous?))
+   (irc-send-message *irc* target text)
+   (irc-send-message *irc* target "no")
   )
  )
 )

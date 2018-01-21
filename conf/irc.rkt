@@ -3,6 +3,7 @@
 (require irc)
 (provide
  identify
+ identify?
  *nick*
  *server*
  *channels*
@@ -11,6 +12,7 @@
 
 ;;; Global IRC variables
 
+(define identify? #f)
 (define *nick* "ircbot")
 (define *password* '())
 (define *realname* "ircbot")

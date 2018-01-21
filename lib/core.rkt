@@ -2,6 +2,7 @@
 
 (provide on-privmsg on-invite)
 (require irc)
+(require "../conf/irc.rkt")
 (require "hooks.rkt")
 (require "threads.rkt")
 (require "structs.rkt")
@@ -18,7 +19,7 @@
  (let*
   ((msg (thread-receive))
    (params (irc-message-parameters msg))
-   (text (cadr (irc-message-parameters msg)))
+   (text (string-trim (cadr (irc-message-parameters msg))))
    (val
     (cond
      ((not (null? (string-split text)))
@@ -43,5 +44,18 @@
  )
 )
 
+(define (on-client-registered)
+ (if identify?
+  (identify)
+  (join *channels*)
+ )
+)
+
+(define (on-logged-in)
+ (join *channels*)
+)
+
 (mk-hook "INVITE" on-invite)
 (mk-hook "PRIVMSG" on-privmsg)
+(mk-hook "001" on-client-registered)
+(mk-hook "900" on-logged-in)

@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+
+my $nick = shift(@ARGV);
+my $chan = shift(@ARGV);
+my $text = shift(@ARGV);
+
+my @opts = split(", ", $text);
+
+if (@opts == 1) {
+	@opts = split(" ", $text);
+}
+
+print(@opts[rand(@opts)]);

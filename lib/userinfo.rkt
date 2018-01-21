@@ -155,7 +155,12 @@
    (params (irc-message-parameters msg))
    (channel (car params))
    (mode (cadr params))
-   (nick (string-trim (caddr params)))
+   (nick
+    (if (null? (cddr params))
+     (string-trim (car params))
+     (string-trim (caddr params))
+    )
+   )
   )
   (cond
    ((regexp-match? #px"^\\#" channel)
