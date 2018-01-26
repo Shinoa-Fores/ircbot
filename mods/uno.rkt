@@ -67,7 +67,7 @@
  (query-maybe-value *db* "SELECT allowed FROM uno_channels WHERE channel = $1" channel)
 )
 
-(define (change-uno-status msg nick channel status)
+(define (change-uno-status msg nick channel allowed)
  (let
   ((status (hash-ref! channel-status channel 0)))
   (cond
@@ -83,10 +83,10 @@
    (else
     (begin
      (if (query-maybe-value *db* "SELECT channel FROM uno_channels WHERE channel = $1" channel)
-      (query-exec *db* "UPDATE uno_channels SET allowed = $2 WHERE channel = $1" channel (if status #t #f))
-      (query-exec *db* "INSERT INTO uno_channels VALUES ( $1, $2 )" channel (if status #t #f))
+      (query-exec *db* "UPDATE uno_channels SET allowed = $2 WHERE channel = $1" channel allowed)
+      (query-exec *db* "INSERT INTO uno_channels VALUES ( $1, $2 )" channel allowed)
      )
-     (reply msg (string-append "uno is now " (if status "enabled" "disabled") " in " channel "."))
+     (reply msg (string-append "uno is now " (if allowed "enabled" "disabled") " in " channel "."))
     )
    )
   )
@@ -502,12 +502,23 @@
  )
 )
 
+(define (randomize-first-player channel)
+ (let*
+  ((plist (hash-ref! players channel '()))
+   (plist-len (length plist)))
+  (for ((i (in-range 0 (random plist-len))))
+   (shift-players channel)
+  )
+ )
+)
+
 (define (init-game2 msg channel)
  (begin
   (reply msg "The game has started! Type %p(lay) <colour> <card> to play a card when it's your turn, %d(raw) to draw a card, %uno leave to leave the game. The first person to discard all of their cards wins. The game can be stopped with %uno stop.")
   (cleanup-db channel)
   (init-deck channel)
   (deal-hands msg channel)
+  (randomize-first-player channel)
   (init-topcard msg channel)
   (hash-set! channel-status channel 2)
   (print-current-players msg channel)
@@ -647,7 +658,7 @@
   (cond
    ((= status 0)
     (reply msg "There's no game to leave!"))
-   ((null? (cdr (hash-ref! players channel '())))
+   ((null? (cddr (hash-ref! players channel '())))
     (stop-game msg channel player))
    (else
     (begin
@@ -774,11 +785,12 @@
      (reply msg
       (string-append
        "stats for " name ": "
-       (~a score) " points in "
-       (~a games) " games out of "
-       (~a wins) " wins with an average of "
-       (real->decimal-string (/ score games) 2) " points/game: "
-       (real->decimal-string (* (/ wins games) 100) 2) "% wins."
+       (~a score) " points from "
+       (~a wins) " wins out of "
+       (~a games) " games "
+       "(" (real->decimal-string (* (/ wins games) 100) 2) "% winrate)"
+       " with "
+       (real->decimal-string (/ score games) 2) " points per game."
       )
      )
     )
