@@ -40,8 +40,8 @@
 ; key is #channel, val is a (list playername ...)
 (define players (make-hash))
 
-(define (print-current-turn msg channel)
- (reply msg (string-append "It's " (car (hash-ref! players channel '())) "'s turn."))
+(define (get-current-turn msg channel)
+ (string-append "it's " (car (hash-ref! players channel '())) "'s turn")
 )
 
 (define (shift-players channel)
@@ -189,27 +189,35 @@
  )
 )
 
-(define (print-cardcount msg channel)
- (reply msg (get-cardcount channel))
-)
-
-(define (print-info channel)
+(define (begin-turn-cardinfo channel)
  (let*-values
   (((player) (car (hash-ref! players channel '())))
    ((top-name top-colour) (vector->values (query-row *db* "SELECT name, colour FROM uno_topcard WHERE channel = $1" channel))))
   (begin
-   (notify player "It's your turn!")
-   (notify player (string-append "The current top card is a " (uno-cl-fromname top-name) " (" (uno-cl top-colour top-colour) ")."))
    (notify player (get-hand channel player "You have"))
+   (string-append "top card is " (uno-cl-fromname top-name)
+   (if (regexp-match? #px"wild" top-name)
+    (string-append " (" (uno-cl top-colour top-colour) ")")
+    ""
+   )
+   ".")
   )
  )
 )
 
 (define (begin-turn msg channel)
- (begin
-  (print-cardcount msg channel)
-  (print-current-turn msg channel)
-  (print-info channel)
+ (reply msg
+  (string-append
+   (get-current-turn msg channel)
+   (let ((cardcount (get-cardcount channel)))
+    (if (> (string-length cardcount) 250)
+     (begin (reply msg cardcount) "")
+     (string-append " (" cardcount ")")
+    )
+   )
+   " | "
+   (begin-turn-cardinfo channel)
+  )
  )
 )
 
@@ -605,14 +613,14 @@
     (query-exec *db* "UPDATE uno_topcard SET name = $1, type = $2, colour = $3, special = $4, id = $5 WHERE channel = $6" card-name type newcolour special? card-id channel)
 
     (hash-set! top-prev-colour channel top-colour)
-    (reply msg
-     (string-append "Top card is now a " (uno-cl-fromname card-name)
-      (if (equal? top-colour newcolour)
-       "."
-       (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
-      )
-     )
-    )
+;    (reply msg
+;     (string-append "Top card is now a " (uno-cl-fromname card-name)
+;      (if (equal? top-colour newcolour)
+;       "."
+;       (string-append ", the top colour is now " (uno-cl newcolour newcolour) ".")
+;      )
+;     )
+;    )
 
     (end-turn msg channel)
 
@@ -802,9 +810,8 @@
 (define (show-help player)
  (begin
   (notify player "To learn to play uno: https://service.mattel.com/instruction_sheets/42001pr.pdf - The bot is 100% compliant to these rules, unless a home rule is set as a flag to %uno start.")
-  (notify player "%uno start will start setting up the game. You can join the game with %uno join during this time. %uno begin will beging the game, and then you can play. %uno start takes homerules arguments after the start, which can be seen in %uno homerules.")
-  (notify player "When the bot announces your turn, you can spend it by either drawing a card or playing a card. To have it notify you of your hand, type %uno hand. To draw a card, simply type %draw or %d. To play a card, type %play or %p. If you still have nothing after drawing, type %skip or %s.")
-  (notify player "The %play command works as follows: %play colour type new-colour?. Colour is the colour of your card. The first letter is enough. For wild cards, type wild. The type is either the number of your card, d2 for a draw-two card, wd4 for a wild draw-four card, s for a skip card, or w for a regular wild card. If you played a wild card, you have to specify a new colour the same way you did your first colour for the deck's top card.")
+  (notify player "%uno start to setup the game, %uno join to join, %uno deal to deal the cards and start playing. %uno cards gives you a briefing on the cards. %uno start takes homerules arguments after the start, which can be seen in %uno homerules.")
+  (notify player "When the bot announces your turn, you can spend it by either drawing a card or playing a card. To have it notify you of your hand, type %uno hand. %draw or %d draws a card, %play or %p plays a card with the syntax: %p <colour if not wild> <card> <newcolour if wild>, after drawing, %skip or %s skips your turn.")
  )
 )
 
@@ -903,7 +910,7 @@
    ((equal? command "start")
     (start-game msg))
 
-   ((equal? command "begin")
+   ((or (equal? command "begin") (equal? command "deal"))
     (begin-game msg channel))
 
    ((equal? command "stop")
