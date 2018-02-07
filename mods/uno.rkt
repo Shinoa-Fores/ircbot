@@ -534,27 +534,54 @@
  )
 )
 
+(define (get-type text)
+ (let
+  ((matches (regexp-match #px"(0|zero|null)|(1|one)|(2|two)|(3|three)|(4|four)|(5|five)|(6|six)|(7|seven)|(8|eight)|(9|nine)|(re?v?e?r?s?e?)|(sk?i?p?)|(d.*?(?:2|tw?o?))|(wi?l?d?[^(?:.*?d.*?(?:4|four)])|(w.*?d.*?(?:4|four))" text))
+   (matchv (vector #f "0" "1" "2" "3" "4" "5" "6" "7" "8" "9" "r" "s" "d2" "w" "wd4"))
+   (ret #f))
+
+   (begin
+    (for ((i (in-range (length matches))) #:break ret)
+     (cond
+      ((and (list-ref matches i) (> i 1) (< i 17))
+        (set! ret (vector-ref matchv i)))
+     )
+    )
+    ret
+   )
+ )
+)
+
+(define (get-colour text)
+ (let
+  ((matches (regexp-match #px"((?:red|\\br|r\\b)|(?:blue|\\bb|b\\b)|(?:yellow|\\by|y\\b)|(?:green|\\bg|g\\b))" text)))
+  (if matches
+   (values
+    (get-real-colour (cadr matches))
+    (regexp-replace (regexp (cadr matches)) text "")
+   )
+   (values #f text)
+  )
+ )
+)
+
+;(matches (regexp-match #px"^(?:([bryg])\\s*?)?([^bryg\\s]+|r)(?:\\s*?([bryg]))?" text))
 (define (parse-played-card msg channel args)
  (if (null? args)
   (uno-err msg "Please enter a card to play")
-  (let*
-   ((text (string-join args " "))
-    (matches (regexp-match #px"^(?:([bryg])\\s*?)?(\\S+)(?:\\s*?(\\w))?" text))
-    (colour (get-real-colour (cadr matches)))
-    (type (caddr matches))
-    (trailing-colour? (get-real-colour (cadddr matches))))
+  (let*-values
+   (((text) (string-join args " "))
+    ((colour newtext) (get-colour text))
+    ((type) (get-type newtext)))
 
    (cond
-    ((null? (cdr matches))
+    ((or (not colour) (not type))
      (uno-err msg "Please enter a card to play"))
 
-    ((and (not colour) (not trailing-colour?))
-     (uno-err msg "Please specify a valid colour"))
-
     ((or (equal? type "w") (equal? type "wd4"))
-     (values "wild" type (if colour colour trailing-colour?)))
+     (values "wild" type colour))
 
-    (else (values (if colour colour trailing-colour?) type (if colour colour trailing-colour?)))
+    (else (values colour type colour))
    )
 
   )
@@ -929,13 +956,3 @@
 (hash-set! *cmds* "%s" draw-play)
 (hash-set! *cmds* "%pass" draw-play)
 (hash-set! *cmds* "%pa" draw-play)
-
-(hash-set! *cmds* ";uno" uno)
-(hash-set! *cmds* ";p" draw-play)
-(hash-set! *cmds* ";play" draw-play)
-(hash-set! *cmds* ";d" draw-play)
-(hash-set! *cmds* ";draw" draw-play)
-(hash-set! *cmds* ";skip" draw-play)
-(hash-set! *cmds* ";s" draw-play)
-(hash-set! *cmds* ";pass" draw-play)
-(hash-set! *cmds* ";pa" draw-play)
