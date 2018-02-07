@@ -538,49 +538,27 @@
  (if (null? args)
   (uno-err msg "Please enter a card to play")
   (let*
-   (
-    (colour
-     ; colour is wild if the first word is w or wd4, else it's the first word.
-     (if (or
-          (equal? (car args) "w")
-          (equal? (car args) "wd4")
-         )
-         "wild"
-         (let ((col (get-real-colour (car args))))
-          (if col col (uno-err msg "That colour doesn't exist in uno."))
-         )
-     )
-    )
-    (type
-     ; type is the first word if the colour is wild, else it's the second word
-     (cond
-      ((equal? colour "wild") (car args))
-      ((null? (cdr args)) (uno-err msg "Please enter a type."))
-      (else (cadr args))
-     )
-    )
-    (newcolour
-     ; newcolour is the second word if colour is wild, and the second word
-     ; exists, else it's wild.
-     (if (not (equal? colour "wild"))
-      colour
-      (cond
-       ((null? (cdr args)) (uno-err msg "Please enter a valid new colour."))
-       (else
-        (let ((ncl (get-real-colour (cadr args))))
-         (if ncl
-          ncl
-          (uno-err msg "Please enter a valid new colour.")
-         )
-        )
-       )
-      )
-     )
-    )
-   ) ; let* values
-   (values colour type newcolour)
-  ) ; let*
- ) ; if
+   ((text (string-join args " "))
+    (matches (regexp-match #px"^(?:([bryg])\\s*?)?(\\S+)(?:\\s*?(\\w))?" text))
+    (colour (get-real-colour (cadr matches)))
+    (type (caddr matches))
+    (trailing-colour? (get-real-colour (cadddr matches))))
+
+   (cond
+    ((null? (cdr matches))
+     (uno-err msg "Please enter a card to play"))
+
+    ((and (not colour) (not trailing-colour?))
+     (uno-err msg "Please specify a valid colour"))
+
+    ((or (equal? type "w") (equal? type "wd4"))
+     (values "wild" type (if colour colour trailing-colour?)))
+
+    (else (values (if colour colour trailing-colour?) type (if colour colour trailing-colour?)))
+   )
+
+  )
+ )
 )
 
 (define (play-card msg channel player args)
@@ -631,6 +609,7 @@
 
 (define (get-real-colour colour)
  (cond
+  ((not colour) #f)
   ((regexp-match? #px"^r" colour) "red")
   ((regexp-match? #px"^g" colour) "green")
   ((regexp-match? #px"^y" colour) "yellow")
@@ -950,3 +929,13 @@
 (hash-set! *cmds* "%s" draw-play)
 (hash-set! *cmds* "%pass" draw-play)
 (hash-set! *cmds* "%pa" draw-play)
+
+(hash-set! *cmds* ";uno" uno)
+(hash-set! *cmds* ";p" draw-play)
+(hash-set! *cmds* ";play" draw-play)
+(hash-set! *cmds* ";d" draw-play)
+(hash-set! *cmds* ";draw" draw-play)
+(hash-set! *cmds* ";skip" draw-play)
+(hash-set! *cmds* ";s" draw-play)
+(hash-set! *cmds* ";pass" draw-play)
+(hash-set! *cmds* ";pa" draw-play)
