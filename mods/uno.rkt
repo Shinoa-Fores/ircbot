@@ -536,14 +536,14 @@
 
 (define (get-type text)
  (let
-  ((matches (regexp-match #px"(0|zero|null)|(1|one)|(2|two)|(3|three)|(4|four)|(5|five)|(6|six)|(7|seven)|(8|eight)|(9|nine)|(re?v?e?r?s?e?)|(sk?i?p?)|(d.*?(?:2|tw?o?))|(wi?l?d?[^(?:.*?d.*?(?:4|four)])|(w.*?d.*?(?:4|four))" text))
+  ((matches (regexp-match #px"(0|zero|null)|(1|one)|(2|two)|(3|three)|(4|four)|(5|five)|(6|six)|(7|seven)|(8|eight)|(9|nine)|(re?v?e?r?s?e?)|(sk?i?p?)|(d.*?(?:2|tw?o?))|(wi?l?d?[^(?:.*?d.*?(?:4|four)])|(wi?l?d?.*?d.*?(?:4|four))" text))
    (matchv (vector #f "0" "1" "2" "3" "4" "5" "6" "7" "8" "9" "r" "s" "d2" "w" "wd4"))
    (ret #f))
 
    (begin
     (for ((i (in-range (length matches))) #:break ret)
      (cond
-      ((and (list-ref matches i) (> i 1) (< i 17))
+      ((and (list-ref matches i) (> i 0))
         (set! ret (vector-ref matchv i)))
      )
     )
